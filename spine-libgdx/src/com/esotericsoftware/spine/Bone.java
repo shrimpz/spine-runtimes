@@ -1,27 +1,32 @@
-/*******************************************************************************
+/******************************************************************************
+ * Spine Runtimes Software License
+ * Version 2.1
+ * 
  * Copyright (c) 2013, Esoteric Software
  * All rights reserved.
  * 
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
+ * You are granted a perpetual, non-exclusive, non-sublicensable and
+ * non-transferable license to install, execute and perform the Spine Runtimes
+ * Software (the "Software") solely for internal use. Without the written
+ * permission of Esoteric Software (typically granted by licensing Spine), you
+ * may not (a) modify, translate, adapt or otherwise create derivative works,
+ * improvements of the Software or develop new applications using the Software
+ * or (b) remove, delete, alter or obscure any trademarks or any copyright,
+ * trademark, patent or other intellectual property or proprietary rights
+ * notices on or in the Software, including any copy thereof. Redistributions
+ * in binary or source form must include this license and terms.
  * 
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- * 
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
- * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
- * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- ******************************************************************************/
+ * THIS SOFTWARE IS PROVIDED BY ESOTERIC SOFTWARE "AS IS" AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO
+ * EVENT SHALL ESOTERIC SOFTARE BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+ * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+ * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+ * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *****************************************************************************/
 
 package com.esotericsoftware.spine;
 
@@ -29,43 +34,61 @@ import static com.badlogic.gdx.math.Matrix3.*;
 
 import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.math.Matrix3;
+import com.badlogic.gdx.math.Vector2;
 
 public class Bone {
 	final BoneData data;
+	final Skeleton skeleton;
 	final Bone parent;
 	float x, y;
-	float rotation;
+	float rotation, rotationIK;
 	float scaleX, scaleY;
+	boolean flipX, flipY;
 
 	float m00, m01, worldX; // a b x
 	float m10, m11, worldY; // c d y
 	float worldRotation;
 	float worldScaleX, worldScaleY;
+	boolean worldFlipX, worldFlipY;
+
+	Bone (BoneData data) {
+		this.data = data;
+		parent = null;
+		skeleton = null;
+	}
 
 	/** @param parent May be null. */
-	public Bone (BoneData data, Bone parent) {
+	public Bone (BoneData data, Skeleton skeleton, Bone parent) {
 		if (data == null) throw new IllegalArgumentException("data cannot be null.");
+		if (skeleton == null) throw new IllegalArgumentException("skeleton cannot be null.");
 		this.data = data;
+		this.skeleton = skeleton;
 		this.parent = parent;
 		setToSetupPose();
 	}
 
 	/** Copy constructor.
 	 * @param parent May be null. */
-	public Bone (Bone bone, Bone parent) {
+	public Bone (Bone bone, Skeleton skeleton, Bone parent) {
 		if (bone == null) throw new IllegalArgumentException("bone cannot be null.");
+		this.skeleton = skeleton;
 		this.parent = parent;
 		data = bone.data;
 		x = bone.x;
 		y = bone.y;
 		rotation = bone.rotation;
+		rotationIK = bone.rotationIK;
 		scaleX = bone.scaleX;
 		scaleY = bone.scaleY;
+		flipX = bone.flipX;
+		flipY = bone.flipY;
 	}
 
 	/** Computes the world SRT using the parent bone and the local SRT. */
-	public void updateWorldTransform (boolean flipX, boolean flipY) {
+	public void updateWorldTransform () {
+		Skeleton skeleton = this.skeleton;
 		Bone parent = this.parent;
+		float x = this.x, y = this.y;
 		if (parent != null) {
 			worldX = x * parent.m00 + y * parent.m01 + parent.worldX;
 			worldY = x * parent.m10 + y * parent.m11 + parent.worldY;
@@ -76,27 +99,34 @@ public class Bone {
 				worldScaleX = scaleX;
 				worldScaleY = scaleY;
 			}
-			worldRotation = data.inheritRotation ? parent.worldRotation + rotation : rotation;
+			worldRotation = data.inheritRotation ? parent.worldRotation + rotationIK : rotationIK;
+			worldFlipX = parent.worldFlipX ^ flipX;
+			worldFlipY = parent.worldFlipY ^ flipY;
 		} else {
-			worldX = flipX ? -x : x;
-			worldY = flipY ? -y : y;
+			boolean skeletonFlipX = skeleton.flipX, skeletonFlipY = skeleton.flipY;
+			worldX = skeletonFlipX ? -x : x;
+			worldY = skeletonFlipY ? -y : y;
 			worldScaleX = scaleX;
 			worldScaleY = scaleY;
-			worldRotation = rotation;
+			worldRotation = rotationIK;
+			worldFlipX = skeletonFlipX ^ flipX;
+			worldFlipY = skeletonFlipY ^ flipY;
 		}
 		float cos = MathUtils.cosDeg(worldRotation);
 		float sin = MathUtils.sinDeg(worldRotation);
-		m00 = cos * worldScaleX;
-		m10 = sin * worldScaleX;
-		m01 = -sin * worldScaleY;
-		m11 = cos * worldScaleY;
-		if (flipX) {
-			m00 = -m00;
-			m01 = -m01;
+		if (worldFlipX) {
+			m00 = -cos * worldScaleX;
+			m01 = sin * worldScaleY;
+		} else {
+			m00 = cos * worldScaleX;
+			m01 = -sin * worldScaleY;
 		}
-		if (flipY) {
-			m10 = -m10;
-			m11 = -m11;
+		if (worldFlipY) {
+			m10 = -sin * worldScaleX;
+			m11 = -cos * worldScaleY;
+		} else {
+			m10 = sin * worldScaleX;
+			m11 = cos * worldScaleY;
 		}
 	}
 
@@ -105,12 +135,19 @@ public class Bone {
 		x = data.x;
 		y = data.y;
 		rotation = data.rotation;
+		rotationIK = rotation;
 		scaleX = data.scaleX;
 		scaleY = data.scaleY;
+		flipX = data.flipX;
+		flipY = data.flipY;
 	}
 
 	public BoneData getData () {
 		return data;
+	}
+
+	public Skeleton getSkeleton () {
+		return skeleton;
 	}
 
 	public Bone getParent () {
@@ -133,12 +170,27 @@ public class Bone {
 		this.y = y;
 	}
 
+	public void setPosition (float x, float y) {
+		this.x = x;
+		this.y = y;
+	}
+
+	/** Returns the forward kinetics rotation. */
 	public float getRotation () {
 		return rotation;
 	}
 
 	public void setRotation (float rotation) {
 		this.rotation = rotation;
+	}
+
+	/** Returns the inverse kinetics rotation, as calculated by any IK constraints. */
+	public float getRotationIK () {
+		return rotationIK;
+	}
+
+	public void setRotationIK (float rotationIK) {
+		this.rotationIK = rotationIK;
 	}
 
 	public float getScaleX () {
@@ -155,6 +207,32 @@ public class Bone {
 
 	public void setScaleY (float scaleY) {
 		this.scaleY = scaleY;
+	}
+
+	public void setScale (float scaleX, float scaleY) {
+		this.scaleX = scaleX;
+		this.scaleY = scaleY;
+	}
+
+	public void setScale (float scale) {
+		scaleX = scale;
+		scaleY = scale;
+	}
+
+	public boolean getFlipX () {
+		return flipX;
+	}
+
+	public void setFlipX (boolean flipX) {
+		this.flipX = flipX;
+	}
+
+	public boolean getFlipY () {
+		return flipY;
+	}
+
+	public void setFlipY (boolean flipY) {
+		this.flipY = flipY;
 	}
 
 	public float getM00 () {
@@ -193,6 +271,14 @@ public class Bone {
 		return worldScaleY;
 	}
 
+	public boolean getWorldFlipX () {
+		return worldFlipX;
+	}
+
+	public boolean getWorldFlipY () {
+		return worldFlipY;
+	}
+
 	public Matrix3 getWorldTransform (Matrix3 worldTransform) {
 		if (worldTransform == null) throw new IllegalArgumentException("worldTransform cannot be null.");
 		float[] val = worldTransform.val;
@@ -206,6 +292,26 @@ public class Bone {
 		val[M21] = 0;
 		val[M22] = 1;
 		return worldTransform;
+	}
+
+	public Vector2 worldToLocal (Vector2 world) {
+		float x = world.x - worldX, y = world.y - worldY;
+		float m00 = this.m00, m10 = this.m10, m01 = this.m01, m11 = this.m11;
+		if (worldFlipX != worldFlipY) {
+			m00 = -m00;
+			m11 = -m11;
+		}
+		float invDet = 1 / (m00 * m11 - m01 * m10);
+		world.x = (x * m00 * invDet - y * m01 * invDet);
+		world.y = (y * m11 * invDet - x * m10 * invDet);
+		return world;
+	}
+
+	public Vector2 localToWorld (Vector2 local) {
+		float x = local.x, y = local.y;
+		local.x = x * m00 + y * m01 + worldX;
+		local.y = x * m10 + y * m11 + worldY;
+		return local;
 	}
 
 	public String toString () {
